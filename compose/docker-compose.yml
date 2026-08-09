@@ -1,0 +1,63 @@
+---
+services:
+  authelia:
+    container_name: authelia
+    image: ${AUTHELIA_IMAGE}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AUTHELIA_IDENTITY_VALIDATION_RESET_PASSWORD_JWT_SECRET_FILE: /secrets/JWT_SECRET
+      AUTHELIA_SESSION_SECRET_FILE: /secrets/SESSION_SECRET
+      AUTHELIA_STORAGE_POSTGRES_PASSWORD_FILE: /secrets/STORAGE_PASSWORD
+      AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE: /secrets/STORAGE_ENCRYPTION_KEY
+    volumes:
+      - ${AUTHELIA_DATA_DIR}/config:/config
+      - ${AUTHELIA_DATA_DIR}/secrets:/secrets
+    networks:
+      - authelia-net
+
+  postgres:
+    container_name: authelia_postgres
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: authelia
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: authelia
+    volumes:
+      - authelia_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U authelia -d authelia"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - authelia-net
+
+  caddy:
+    container_name: authelia_caddy
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - authelia
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ${AED_CADDYFILE}:/etc/caddy/Caddyfile:ro
+      - authelia_caddy_data:/data
+      - authelia_caddy_config:/config
+    networks:
+      - authelia-net
+
+networks:
+  authelia-net:
+    name: authelia-net
+
+volumes:
+  authelia_postgres_data:
+  authelia_caddy_data:
+  authelia_caddy_config:

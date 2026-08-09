@@ -1,0 +1,14 @@
+---
+services:
+  redis:
+    container_name: authelia_redis
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks:
+      - authelia-net
+
+  authelia:
+    depends_on:
+      redis:
+        condition: service_started

@@ -1,0 +1,48 @@
+# authelia-easy-deploy — operator configuration
+# Copy to deploy.yaml and run: bash apply.sh
+
+authelia:
+  domain: auth.example.com
+  sso_domain: example.com
+  image: docker.io/authelia/authelia
+  tag: "4.39.4"
+  data_dir: /var/lib/authelia
+
+proxy:
+  type: caddy
+
+storage:
+  type: postgres
+
+session:
+  redis:
+    enabled: false
+
+authentication:
+  backend: file
+
+users:
+  - username: admin
+    display_name: Admin
+    email: admin@example.com
+    groups:
+      - opencloud-admin
+      - matrix-admins
+
+notifier:
+  type: smtp
+  smtp:
+    host: ""
+    port: 587
+    username: ""
+    from: "Authelia <noreply@example.com>"
+
+access_control:
+  default_policy: deny
+  rules:
+    - domain: "*.example.com"
+      policy: one_factor
+
+oidc:
+  enabled: true
+  clients: []
