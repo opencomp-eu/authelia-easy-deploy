@@ -90,6 +90,21 @@ def save_yaml(path: Path, data: dict) -> None:
         yaml.safe_dump(data, handle, default_flow_style=False, sort_keys=False)
 
 
+def save_users_database(path: Path, users: dict[str, dict[str, Any]]) -> None:
+    """Write Authelia file auth database (users keyed by username, not a list)."""
+    if not users:
+        raise ValueError("users_database requires at least one user")
+    save_yaml(path, {"users": users})
+    loaded = load_yaml(path).get("users")
+    if isinstance(loaded, list):
+        raise RuntimeError(
+            f"{path} was written in the wrong shape (list under users). "
+            "This is a bug — please report it."
+        )
+    if not isinstance(loaded, dict):
+        raise RuntimeError(f"{path}: expected users to be a mapping, got {type(loaded).__name__}")
+
+
 def normalize_pem(text: str) -> str:
     lines = [line.rstrip() for line in text.strip().splitlines()]
     return "\n".join(lines) + "\n"
@@ -508,8 +523,8 @@ def render_runtime_artifacts(config: dict, secrets: dict) -> None:
 
     image = f"{authelia.get('image', 'docker.io/authelia/authelia')}:{authelia.get('tag', 'latest')}"
     users = resolve_user_passwords(config, secrets, image)
-    users_doc = {"users": users}
-    save_yaml(config_dir / "users_database.yml", users_doc)
+    users_db_path = config_dir / "users_database.yml"
+    save_users_database(users_db_path, users)
 
     configuration = build_configuration(config, secrets, image)
     oidc_active = oidc_provider_enabled(config)
@@ -576,6 +591,10 @@ def validate_authelia_configuration(config: dict, data_dir: Path, secrets: dict)
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
+        users_path = data_dir / "config" / "users_database.yml"
+        if users_path.is_file():
+            preview = "\n".join(users_path.read_text().splitlines()[:8])
+            detail = f"{detail}\n\n--- {users_path} (first lines) ---\n{preview}"
         raise RuntimeError(f"Authelia configuration validation failed:\n{detail}")
 
 
