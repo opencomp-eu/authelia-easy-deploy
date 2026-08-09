@@ -61,6 +61,21 @@ def to_bool(value: Any) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def oidc_clients(config: dict) -> list[Any]:
+    oidc = config.get("oidc") or {}
+    if not to_bool(oidc.get("enabled")):
+        return []
+    clients = oidc.get("clients") or []
+    if not isinstance(clients, list):
+        return []
+    return clients
+
+
+def oidc_provider_enabled(config: dict) -> bool:
+    """Authelia requires at least one OIDC client when the provider is configured."""
+    return len(oidc_clients(config)) > 0
+
+
 def load_yaml(path: Path) -> dict:
     with path.open() as handle:
         data = yaml.safe_load(handle) or {}
@@ -402,9 +417,9 @@ def build_configuration(config: dict, secrets: dict, image: str) -> dict:
         "access_control": access_block,
     }
 
-    if to_bool((config.get("oidc") or {}).get("enabled")):
+    if oidc_provider_enabled(config):
         private_key, certificate = load_or_create_jwks(secrets)
-        clients = config.get("oidc", {}).get("clients") or []
+        clients = oidc_clients(config)
         configuration["identity_providers"] = {
             "oidc": {
                 "jwks": [
@@ -496,8 +511,8 @@ def render_runtime_artifacts(config: dict, secrets: dict) -> None:
     users_doc = {"users": users}
     save_yaml(config_dir / "users_database.yml", users_doc)
 
-    oidc_enabled = to_bool((config.get("oidc") or {}).get("enabled"))
     configuration = build_configuration(config, secrets, image)
+    oidc_active = oidc_provider_enabled(config)
     save_authelia_configuration(config_dir / "configuration.yml", configuration)
 
     if str((config.get("notifier") or {}).get("type") or "").lower() == "filesystem":
@@ -505,9 +520,9 @@ def render_runtime_artifacts(config: dict, secrets: dict) -> None:
         if not notification_file.exists():
             notification_file.write_text("")
 
-    write_secret_files(data_dir, secrets, oidc_enabled)
+    write_secret_files(data_dir, secrets, oidc_active)
     render_caddyfile(config)
-    render_compose_override(oidc_enabled)
+    render_compose_override(oidc_active)
     write_compose_env(config, secrets)
 
 
@@ -529,7 +544,7 @@ def docker_compose_cmd() -> list[str]:
 def validate_authelia_configuration(config: dict, data_dir: Path, secrets: dict) -> None:
     authelia = config["authelia"]
     image = f"{authelia.get('image', 'docker.io/authelia/authelia')}:{authelia.get('tag', 'latest')}"
-    oidc_enabled = to_bool((config.get("oidc") or {}).get("enabled"))
+    oidc_active = oidc_provider_enabled(config)
     env = [
         "-e",
         "AUTHELIA_IDENTITY_VALIDATION_RESET_PASSWORD_JWT_SECRET_FILE=/secrets/JWT_SECRET",
@@ -540,7 +555,7 @@ def validate_authelia_configuration(config: dict, data_dir: Path, secrets: dict)
         "-e",
         "AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE=/secrets/STORAGE_ENCRYPTION_KEY",
     ]
-    if oidc_enabled:
+    if oidc_active:
         env.extend(["-e", "AUTHELIA_IDENTITY_PROVIDERS_OIDC_HMAC_SECRET_FILE=/secrets/OIDC_HMAC_SECRET"])
     cmd = [
         "docker",
@@ -628,6 +643,14 @@ def print_summary(config: dict, secrets: dict) -> None:
     username = admin.get("username", "admin")
     if not str(admin.get("password") or "").strip():
         print(f"Admin password:  {secrets.get('ADMIN_PASSWORD')} (auto-generated; stored in secrets.yaml)")
+    oidc = config.get("oidc") or {}
+    if to_bool(oidc.get("enabled")) and not oidc_provider_enabled(config):
+        print(
+            "OIDC: enabled in deploy.yaml but no clients defined — "
+            "portal runs without OIDC until you add oidc.clients and re-run apply."
+        )
+    elif oidc_provider_enabled(config):
+        print(f"OIDC provider:   active ({len(oidc_clients(config))} client(s))")
     print()
     print("Next: see docs/integrating-services.md to wire OpenCloud or Matrix to this IdP.")
     print()

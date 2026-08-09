@@ -56,7 +56,21 @@ def _base_config(**overrides) -> dict:
             "default_policy": "deny",
             "rules": [{"domain": "*.test.example", "policy": "one_factor"}],
         },
-        "oidc": {"enabled": True, "clients": []},
+        "oidc": {
+            "enabled": True,
+            "clients": [
+                {
+                    "client_id": "test-client",
+                    "client_name": "Test",
+                    "authorization_policy": "one_factor",
+                    "redirect_uris": ["https://app.test.example/oidc/callback"],
+                    "scopes": ["openid", "profile", "email"],
+                    "grant_types": ["authorization_code"],
+                    "response_types": ["code"],
+                    "token_endpoint_auth_method": "client_secret_basic",
+                }
+            ],
+        },
     }
     for key, value in overrides.items():
         if isinstance(value, dict) and key in config and isinstance(config[key], dict):
@@ -102,6 +116,19 @@ def test_build_configuration_session_and_oidc():
     assert doc["storage"]["postgres"]["address"] == "tcp://postgres:5432"
     assert "identity_providers" in doc
     assert doc["identity_providers"]["oidc"]["jwks"][0]["algorithm"] == "RS256"
+
+
+def test_build_configuration_oidc_enabled_without_clients_skips_provider():
+    secrets = {
+        "JWT_SECRET": "j",
+        "SESSION_SECRET": "s",
+        "STORAGE_PASSWORD": "p",
+        "STORAGE_ENCRYPTION_KEY": "e" * 20,
+        "OIDC_HMAC_SECRET": "h",
+    }
+    config = _base_config(oidc={"enabled": True, "clients": []})
+    doc = build_configuration(config, secrets, "docker.io/authelia/authelia:4.39.4")
+    assert "identity_providers" not in doc
 
 
 def test_save_authelia_configuration_uses_literal_pem_blocks(tmp_path):
