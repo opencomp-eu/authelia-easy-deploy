@@ -308,8 +308,8 @@ def hash_password_argon2(password: str, image: str) -> str:
     return parse_authelia_password_hash(combined)
 
 
-def resolve_user_passwords(config: dict, secrets: dict, image: str) -> list[dict]:
-    users_out: list[dict] = []
+def resolve_user_passwords(config: dict, secrets: dict, image: str) -> dict[str, dict[str, Any]]:
+    users_out: dict[str, dict[str, Any]] = {}
     for index, user in enumerate(config.get("users") or []):
         if not isinstance(user, dict):
             raise ValueError(f"users[{index}] must be a mapping")
@@ -317,7 +317,7 @@ def resolve_user_passwords(config: dict, secrets: dict, image: str) -> list[dict
         if not username:
             raise ValueError(f"users[{index}].username is required")
         entry: dict[str, Any] = {
-            "username": username,
+            "disabled": False,
             "displayname": str(user.get("display_name") or username),
             "email": str(user.get("email") or f"{username}@local"),
             "groups": list(user.get("groups") or []),
@@ -333,7 +333,7 @@ def resolve_user_passwords(config: dict, secrets: dict, image: str) -> list[dict
                 secrets[secret_key] = hash_password_argon2(secrets["ADMIN_PASSWORD"], image)
                 save_yaml(SECRETS_PATH, secrets)
             entry["password"] = secrets[secret_key]
-        users_out.append(entry)
+        users_out[username] = entry
     return users_out
 
 

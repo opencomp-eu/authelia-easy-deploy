@@ -173,6 +173,18 @@ def test_build_configuration_redis_and_filesystem_notifier():
     assert "identity_providers" not in doc
 
 
+def test_resolve_user_passwords_map_format():
+    from scripts.apply import resolve_user_passwords
+
+    config = _base_config()
+    secrets = {"ADMIN_PASSWORD": "x"}
+    users = resolve_user_passwords(config, secrets, "docker.io/authelia/authelia:4.39.4")
+    assert "admin" in users
+    assert "username" not in users["admin"]
+    assert users["admin"]["displayname"] == "Admin"
+    assert users["admin"]["password"].startswith("$argon2")
+
+
 def test_render_caddyfile(tmp_path, monkeypatch):
     caddy_dir = tmp_path / "caddy"
     caddy_dir.mkdir()
