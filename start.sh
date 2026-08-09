@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# start.sh — start Authelia stack (includes Caddy)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -8,18 +7,25 @@ source "${SCRIPT_DIR}/scripts/lib.sh"
 
 IFS=' ' read -ra DOCKER_COMPOSE <<< "$(docker_compose_cmd)"
 ENV_FILE="${SCRIPT_DIR}/.authelia-easy-deploy/compose.env"
+DEPLOY="${SCRIPT_DIR}/deploy.yaml"
 
 compose_args=(-f "${SCRIPT_DIR}/compose/docker-compose.yml")
-if [[ -f "${SCRIPT_DIR}/deploy.yaml" ]] && grep -A2 "redis:" "${SCRIPT_DIR}/deploy.yaml" | grep -q "enabled: true"; then
+integrate="false"
+if [[ -f "$DEPLOY" ]] && grep -qE 'mode:\s*integrate' "$DEPLOY" 2>/dev/null; then
+	integrate="true"
+fi
+if [[ -f "$DEPLOY" ]] && grep -A2 "redis:" "$DEPLOY" | grep -q "enabled: true"; then
 	compose_args+=(-f "${SCRIPT_DIR}/compose/redis.yml")
 fi
-if [[ -f "${SCRIPT_DIR}/.authelia-easy-deploy/compose.override.yml" ]]; then
+if [[ "$integrate" == "true" ]]; then
+	compose_args+=(-f "${SCRIPT_DIR}/compose/integrate.yml")
+else
+	compose_args+=(-f "${SCRIPT_DIR}/compose/caddy.yml")
+fi
+[[ -f "${SCRIPT_DIR}/.authelia-easy-deploy/compose.override.yml" ]] && \
 	compose_args+=(-f "${SCRIPT_DIR}/.authelia-easy-deploy/compose.override.yml")
-fi
 
-if [[ ! -f "$ENV_FILE" ]]; then
-	die "Missing ${ENV_FILE} — run bash apply.sh first"
-fi
+[[ -f "$ENV_FILE" ]] || die "Missing compose env — run bash apply.sh first"
 
 env_args=()
 while IFS= read -r line || [[ -n "$line" ]]; do
@@ -28,9 +34,5 @@ while IFS= read -r line || [[ -n "$line" ]]; do
 done <"$ENV_FILE"
 
 info "Starting Authelia stack…"
-(
-	cd "${SCRIPT_DIR}/compose"
-	env "${env_args[@]}" "${DOCKER_COMPOSE[@]}" "${compose_args[@]}" up -d
-)
-
-success "All services started."
+(cd "${SCRIPT_DIR}/compose" && env "${env_args[@]}" "${DOCKER_COMPOSE[@]}" "${compose_args[@]}" up -d)
+success "Started."

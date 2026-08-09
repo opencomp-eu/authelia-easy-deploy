@@ -30,7 +30,7 @@ def _base_config(**overrides) -> dict:
             "tag": "4.39.4",
             "data_dir": "/var/lib/authelia",
         },
-        "proxy": {"type": "caddy"},
+        "proxy": {"type": "caddy", "mode": "standalone", "integrate": {"network": "easydeploy-net"}},
         "storage": {"type": "postgres"},
         "session": {"redis": {"enabled": False}},
         "authentication": {"backend": "file"},
@@ -93,11 +93,36 @@ def test_validate_config_requires_smtp_host():
 
 
 def test_derive_compose_files_redis_overlay():
-    assert derive_compose_files(_base_config()) == ["docker-compose.yml"]
+    assert derive_compose_files(_base_config()) == ["docker-compose.yml", "caddy.yml"]
     assert derive_compose_files(_base_config(session={"redis": {"enabled": True}})) == [
         "docker-compose.yml",
         "redis.yml",
+        "caddy.yml",
     ]
+
+
+def test_derive_compose_files_integrate_mode():
+    config = _base_config(proxy={"type": "caddy", "mode": "integrate", "integrate": {"network": "easydeploy-net"}})
+    assert derive_compose_files(config) == ["docker-compose.yml", "integrate.yml"]
+
+
+def test_render_integration_fragment(tmp_path, monkeypatch):
+    from scripts.apply import INTEGRATION_CADDY_FRAGMENT, render_integration_fragment
+
+    monkeypatch.setattr("scripts.apply.INTEGRATION_DIR", tmp_path)
+    monkeypatch.setattr("scripts.apply.INTEGRATION_CADDY_FRAGMENT", tmp_path / "caddy.caddy")
+    render_integration_fragment(_base_config())
+    text = (tmp_path / "caddy.caddy").read_text()
+    assert "auth.test.example" in text
+    assert "reverse_proxy authelia:9091" in text
+
+
+def test_derive_compose_files_redis_and_integrate():
+    config = _base_config(
+        session={"redis": {"enabled": True}},
+        proxy={"type": "caddy", "mode": "integrate"},
+    )
+    assert derive_compose_files(config) == ["docker-compose.yml", "redis.yml", "integrate.yml"]
 
 
 def test_build_configuration_session_and_oidc():

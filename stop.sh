@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# stop.sh — stop Authelia stack (data preserved)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -8,16 +7,23 @@ source "${SCRIPT_DIR}/scripts/lib.sh"
 
 IFS=' ' read -ra DOCKER_COMPOSE <<< "$(docker_compose_cmd)"
 ENV_FILE="${SCRIPT_DIR}/.authelia-easy-deploy/compose.env"
+DEPLOY="${SCRIPT_DIR}/deploy.yaml"
 
 compose_args=(-f "${SCRIPT_DIR}/compose/docker-compose.yml")
-if [[ -f "${SCRIPT_DIR}/compose/redis.yml" ]] && [[ -f "${SCRIPT_DIR}/deploy.yaml" ]]; then
-	if grep -q "enabled: true" "${SCRIPT_DIR}/deploy.yaml" 2>/dev/null && grep -A2 "redis:" "${SCRIPT_DIR}/deploy.yaml" | grep -q "enabled: true"; then
-		compose_args+=(-f "${SCRIPT_DIR}/compose/redis.yml")
-	fi
+integrate="false"
+if [[ -f "$DEPLOY" ]] && grep -qE 'mode:\s*integrate' "$DEPLOY" 2>/dev/null; then
+	integrate="true"
 fi
-if [[ -f "${SCRIPT_DIR}/.authelia-easy-deploy/compose.override.yml" ]]; then
+if [[ -f "$DEPLOY" ]] && grep -A2 "redis:" "$DEPLOY" | grep -q "enabled: true"; then
+	compose_args+=(-f "${SCRIPT_DIR}/compose/redis.yml")
+fi
+if [[ "$integrate" == "true" ]]; then
+	compose_args+=(-f "${SCRIPT_DIR}/compose/integrate.yml")
+else
+	compose_args+=(-f "${SCRIPT_DIR}/compose/caddy.yml")
+fi
+[[ -f "${SCRIPT_DIR}/.authelia-easy-deploy/compose.override.yml" ]] && \
 	compose_args+=(-f "${SCRIPT_DIR}/.authelia-easy-deploy/compose.override.yml")
-fi
 
 env_args=()
 if [[ -f "$ENV_FILE" ]]; then
@@ -36,5 +42,4 @@ info "Stopping Authelia stack…"
 		"${DOCKER_COMPOSE[@]}" "${compose_args[@]}" down --remove-orphans || true
 	fi
 )
-
-success "All services stopped. Data directories are unchanged."
+success "Stopped."

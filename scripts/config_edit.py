@@ -49,6 +49,7 @@ def update_from_wizard(
     smtp_from: str,
     redis_enabled: bool,
     oidc_enabled: bool,
+    proxy_mode: str,
     path: Path = DEFAULT_DEPLOY_PATH,
 ) -> None:
     config = load_or_init(path)
@@ -60,7 +61,11 @@ def update_from_wizard(
     authelia.setdefault("tag", "4.39.4")
     authelia["data_dir"] = data_dir.rstrip("/")
 
-    config["proxy"] = {"type": "caddy"}
+    config["proxy"] = {
+        "type": "caddy",
+        "mode": proxy_mode,
+        "integrate": {"network": "easydeploy-net"},
+    }
     config["storage"] = {"type": "postgres"}
     config["session"] = {"redis": {"enabled": redis_enabled}}
     config["authentication"] = {"backend": "file"}

@@ -23,3 +23,7 @@ Details depend on your Matrix `deploy.yaml` SSO section; wire issuer and client 
 For apps protected by **forward auth** rather than OIDC, add Caddy `forward_auth` blocks pointing at `authelia:9091` with URI `/api/authz/forward-auth`. See [Authelia Caddy integration](https://www.authelia.com/integration/proxies/caddy/).
 
 Phase 2 of Authelia Easy Deploy will generate these snippets and attach Authelia to existing `opencloud-net` / `caddy_net` without a second public Caddy.
+
+## Shared engine (integrated VPS)
+
+For one Caddy on the host, use **easydeploy-engine** and `proxy.mode: integrate` in this kit. See [integrating-engine.md](integrating-engine.md).

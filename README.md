@@ -12,6 +12,11 @@ Designed to become the shared authentication/authorization server for other **ea
 
 Authelia must be reached over **HTTPS** (Caddy obtains certificates automatically).
 
+### Proxy modes
+
+- **`proxy.mode: standalone`** (default) — this repo runs `authelia_caddy` on ports 80/443.
+- **`proxy.mode: integrate`** — no local Caddy; emits a fragment for [easydeploy-engine](../easydeploy-engine/) (multi-service VPS). See [docs/integrating-engine.md](docs/integrating-engine.md).
+
 ## Quick start
 
 ```bash

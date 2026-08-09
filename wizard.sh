@@ -19,7 +19,7 @@ gather_config() {
 	local auth_domain sso_domain data_dir
 	local admin_username admin_display_name admin_email admin_password
 	local notifier_type smtp_host smtp_port smtp_username smtp_from
-	local redis_enabled oidc_enabled proceed
+	local redis_enabled oidc_enabled proceed proxy_mode
 	local base_domain
 
 	print_banner
@@ -68,6 +68,16 @@ gather_config() {
 	ask_yn oidc_enabled "Enable OIDC provider? (needed for OpenCloud / Matrix later)" "y"
 
 	echo
+	echo -e "${BOLD}  Reverse proxy${RESET}"
+	echo "  standalone — this kit runs Caddy on :443 (single-service VPS)"
+	echo "  integrate  — shared Caddy via easydeploy-engine (multi-service VPS)"
+	ask proxy_mode "Proxy mode: standalone or integrate" "standalone"
+	proxy_mode="${proxy_mode,,}"
+	if [[ "$proxy_mode" != "standalone" && "$proxy_mode" != "integrate" ]]; then
+		die "proxy mode must be 'standalone' or 'integrate'"
+	fi
+
+	echo
 	echo -e "${BOLD}  Summary${RESET}"
 	echo "  Portal:        https://${auth_domain}"
 	echo "  SSO domain:    ${sso_domain}"
@@ -76,6 +86,7 @@ gather_config() {
 	echo "  Notifier:      ${notifier_type}"
 	echo "  Redis:         ${redis_enabled}"
 	echo "  OIDC:          ${oidc_enabled}"
+	echo "  Proxy mode:    ${proxy_mode}"
 	echo
 	echo "  Ensure DNS A/AAAA for ${auth_domain} points to this server before continuing."
 	echo
@@ -106,6 +117,7 @@ update_from_wizard(
     smtp_from=${smtp_from@Q},
     redis_enabled=${redis_enabled@Q} == "y",
     oidc_enabled=${oidc_enabled@Q} == "y",
+    proxy_mode=${proxy_mode@Q},
     path=Path(${DEPLOY_YAML@Q}),
 )
 PY
