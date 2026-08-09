@@ -200,6 +200,22 @@ def load_or_create_jwks(secrets: dict) -> tuple[str, str]:
     return private_key, certificate
 
 
+def parse_authelia_password_hash(output: str) -> str:
+    """Extract argon2 digest from `authelia crypto hash generate` stdout."""
+    for line in output.splitlines():
+        candidate = line.strip()
+        if candidate.lower().startswith("digest:"):
+            candidate = candidate.split(":", 1)[1].strip()
+        if candidate.startswith("$argon2"):
+            return candidate
+    stripped = output.strip()
+    if stripped.lower().startswith("digest:"):
+        stripped = stripped.split(":", 1)[1].strip()
+    if stripped.startswith("$argon2"):
+        return stripped
+    raise RuntimeError(f"Unexpected password hash output: {output.strip()[:80]!r}")
+
+
 def hash_password_argon2(password: str, image: str) -> str:
     try:
         result = subprocess.run(
@@ -225,10 +241,8 @@ def hash_password_argon2(password: str, image: str) -> str:
             "Failed to hash password via Authelia Docker image — ensure Docker can pull "
             f"{image} and re-run apply"
         ) from exc
-    digest = result.stdout.strip()
-    if not digest.startswith("$argon2"):
-        raise RuntimeError(f"Unexpected password hash output: {digest[:80]!r}")
-    return digest
+    combined = "\n".join(part for part in (result.stdout, result.stderr) if part)
+    return parse_authelia_password_hash(combined)
 
 
 def resolve_user_passwords(config: dict, secrets: dict, image: str) -> list[dict]:

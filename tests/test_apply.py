@@ -143,6 +143,20 @@ def test_render_template_missing_placeholder():
         render_template("{{A}}", {})
 
 
+def test_parse_authelia_password_hash_digest_prefix():
+    from scripts.apply import parse_authelia_password_hash
+
+    raw = "Digest: $argon2id$v=19$m=65536,t=3,p=4$abc$def\n"
+    assert parse_authelia_password_hash(raw).startswith("$argon2id$")
+
+
+def test_parse_authelia_password_hash_bare():
+    from scripts.apply import parse_authelia_password_hash
+
+    raw = "$argon2id$v=19$m=65536,t=3,p=4$abc$def"
+    assert parse_authelia_password_hash(raw) == raw
+
+
 def test_load_or_create_secrets_preserves_existing(tmp_path, monkeypatch):
     state = tmp_path / "state"
     state.mkdir()
