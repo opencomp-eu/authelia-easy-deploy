@@ -104,6 +104,29 @@ def test_build_configuration_session_and_oidc():
     assert doc["identity_providers"]["oidc"]["jwks"][0]["algorithm"] == "RS256"
 
 
+def test_save_authelia_configuration_uses_literal_pem_blocks(tmp_path):
+    from scripts.apply import save_authelia_configuration
+
+    doc = {
+        "identity_providers": {
+            "oidc": {
+                "jwks": [
+                    {
+                        "key": "-----BEGIN PRIVATE KEY-----\nline\n-----END PRIVATE KEY-----\n",
+                        "certificate_chain": "-----BEGIN CERTIFICATE-----\ncert\n-----END CERTIFICATE-----\n",
+                    }
+                ]
+            }
+        }
+    }
+    path = tmp_path / "configuration.yml"
+    save_authelia_configuration(path, doc)
+    text = path.read_text()
+    assert "key: |" in text
+    assert "certificate_chain: |" in text
+    assert "'-----BEGIN" not in text
+
+
 def test_build_configuration_redis_and_filesystem_notifier():
     secrets = {
         "JWT_SECRET": "j",

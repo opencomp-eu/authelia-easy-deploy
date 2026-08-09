@@ -15,6 +15,22 @@ from typing import Any
 
 import yaml
 
+try:
+    from yaml import CSafeDumper as _YamlDumper
+except ImportError:
+    from yaml import SafeDumper as _YamlDumper
+
+
+class LiteralStr(str):
+    """YAML literal block scalar (|) for multiline PEM content."""
+
+
+def _literal_str_representer(dumper: yaml.Dumper, data: LiteralStr) -> yaml.nodes.ScalarNode:
+    return dumper.represent_scalar("tag:yaml.org,2002:str", str(data), style="|")
+
+
+yaml.add_representer(LiteralStr, _literal_str_representer, Dumper=_YamlDumper)
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 COMPOSE_DIR = PROJECT_ROOT / "compose"
 STATE_DIR = PROJECT_ROOT / ".authelia-easy-deploy"
@@ -57,6 +73,38 @@ def save_yaml(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as handle:
         yaml.safe_dump(data, handle, default_flow_style=False, sort_keys=False)
+
+
+def normalize_pem(text: str) -> str:
+    lines = [line.rstrip() for line in text.strip().splitlines()]
+    return "\n".join(lines) + "\n"
+
+
+def literalize_pem_fields(value: Any) -> Any:
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            if key in {"key", "certificate_chain"} and isinstance(item, str) and "BEGIN" in item:
+                result[key] = LiteralStr(normalize_pem(item))
+            else:
+                result[key] = literalize_pem_fields(item)
+        return result
+    if isinstance(value, list):
+        return [literalize_pem_fields(item) for item in value]
+    return value
+
+
+def save_authelia_configuration(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    prepared = literalize_pem_fields(data)
+    with path.open("w") as handle:
+        yaml.dump(
+            prepared,
+            handle,
+            Dumper=_YamlDumper,
+            default_flow_style=False,
+            sort_keys=False,
+        )
 
 
 def render_template(template: str, values: dict[str, str]) -> str:
@@ -450,7 +498,12 @@ def render_runtime_artifacts(config: dict, secrets: dict) -> None:
 
     oidc_enabled = to_bool((config.get("oidc") or {}).get("enabled"))
     configuration = build_configuration(config, secrets, image)
-    save_yaml(config_dir / "configuration.yml", configuration)
+    save_authelia_configuration(config_dir / "configuration.yml", configuration)
+
+    if str((config.get("notifier") or {}).get("type") or "").lower() == "filesystem":
+        notification_file = config_dir / "notification.txt"
+        if not notification_file.exists():
+            notification_file.write_text("")
 
     write_secret_files(data_dir, secrets, oidc_enabled)
     render_caddyfile(config)
@@ -473,13 +526,49 @@ def docker_compose_cmd() -> list[str]:
     raise RuntimeError("Docker Compose v2 is required (docker compose)")
 
 
-def ensure_docker_network(name: str) -> None:
-    result = subprocess.run(
-        ["docker", "network", "inspect", name],
-        capture_output=True,
-    )
+def validate_authelia_configuration(config: dict, data_dir: Path, secrets: dict) -> None:
+    authelia = config["authelia"]
+    image = f"{authelia.get('image', 'docker.io/authelia/authelia')}:{authelia.get('tag', 'latest')}"
+    oidc_enabled = to_bool((config.get("oidc") or {}).get("enabled"))
+    env = [
+        "-e",
+        "AUTHELIA_IDENTITY_VALIDATION_RESET_PASSWORD_JWT_SECRET_FILE=/secrets/JWT_SECRET",
+        "-e",
+        "AUTHELIA_SESSION_SECRET_FILE=/secrets/SESSION_SECRET",
+        "-e",
+        "AUTHELIA_STORAGE_POSTGRES_PASSWORD_FILE=/secrets/STORAGE_PASSWORD",
+        "-e",
+        "AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE=/secrets/STORAGE_ENCRYPTION_KEY",
+    ]
+    if oidc_enabled:
+        env.extend(["-e", "AUTHELIA_IDENTITY_PROVIDERS_OIDC_HMAC_SECRET_FILE=/secrets/OIDC_HMAC_SECRET"])
+    cmd = [
+        "docker",
+        "run",
+        "--rm",
+        *env,
+        "-v",
+        f"{data_dir / 'config'}:/config:ro",
+        "-v",
+        f"{data_dir / 'secrets'}:/secrets:ro",
+        image,
+        "authelia",
+        "config",
+        "validate",
+        "--config",
+        "/config/configuration.yml",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        subprocess.run(["docker", "network", "create", name], check=True)
+        detail = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(f"Authelia configuration validation failed:\n{detail}")
+
+
+def print_authelia_logs() -> None:
+    if subprocess.run(["docker", "inspect", "authelia"], capture_output=True).returncode != 0:
+        return
+    print("\n--- authelia container logs (last 80 lines) ---", file=sys.stderr)
+    subprocess.run(["docker", "logs", "authelia", "--tail", "80"], check=False)
 
 
 def run_compose(*args: str) -> None:
@@ -496,16 +585,32 @@ def run_compose(*args: str) -> None:
             key, value = line.split("=", 1)
             env[key.strip()] = value.strip()
 
-    subprocess.run(cmd, cwd=COMPOSE_DIR, check=True, env=env)
+    try:
+        subprocess.run(cmd, cwd=COMPOSE_DIR, check=True, env=env)
+    except subprocess.CalledProcessError:
+        print_authelia_logs()
+        raise
 
 
 def reconcile_runtime(skip_pull: bool = False) -> None:
-    ensure_docker_network("authelia-net")
+    config = load_config()
+    data_dir = Path(str(config["authelia"]["data_dir"]))
+    secrets = load_yaml(SECRETS_PATH)
+    print("Validating Authelia configuration…")
+    validate_authelia_configuration(config, data_dir, secrets)
     if not skip_pull:
         print("Pulling Authelia stack images…")
         run_compose("pull")
     print("Starting Authelia stack…")
-    run_compose("up", "-d", "--wait", "--remove-orphans")
+    try:
+        run_compose("up", "-d", "--wait", "--remove-orphans")
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            "Docker Compose failed while starting the stack. "
+            "If you see a network warning about authelia-net, run: "
+            "docker compose -f compose/docker-compose.yml down && docker network rm authelia-net "
+            "then re-run apply.sh"
+        ) from exc
 
 
 def print_summary(config: dict, secrets: dict) -> None:
