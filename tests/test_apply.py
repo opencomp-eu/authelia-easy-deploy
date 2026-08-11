@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 from scripts.apply import (
+    COMPOSE_PROJECT_NAME,
     build_configuration,
     derive_compose_files,
     load_or_create_secrets,
@@ -90,6 +91,11 @@ def test_validate_config_requires_smtp_host():
     config["notifier"] = {"type": "smtp", "smtp": {"host": "", "port": 587}}
     with pytest.raises(ValueError, match="notifier.smtp.host"):
         validate_config(config)
+
+
+def test_compose_project_name_is_unique():
+    assert COMPOSE_PROJECT_NAME == "authelia-easy-deploy"
+    assert COMPOSE_PROJECT_NAME != "compose"
 
 
 def test_derive_compose_files_redis_overlay():

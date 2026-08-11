@@ -9,7 +9,9 @@ IFS=' ' read -ra DOCKER_COMPOSE <<< "$(docker_compose_cmd)"
 ENV_FILE="${SCRIPT_DIR}/.authelia-easy-deploy/compose.env"
 DEPLOY="${SCRIPT_DIR}/deploy.yaml"
 
-compose_args=(-f "${SCRIPT_DIR}/compose/docker-compose.yml")
+COMPOSE_PROJECT_NAME="authelia-easy-deploy"
+
+compose_args=(-p "$COMPOSE_PROJECT_NAME" -f "${SCRIPT_DIR}/compose/docker-compose.yml")
 integrate="false"
 if [[ -f "$DEPLOY" ]] && grep -qE 'mode:\s*integrate' "$DEPLOY" 2>/dev/null; then
 	integrate="true"

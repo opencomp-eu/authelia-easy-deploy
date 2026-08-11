@@ -33,6 +33,7 @@ yaml.add_representer(LiteralStr, _literal_str_representer, Dumper=_YamlDumper)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 COMPOSE_DIR = PROJECT_ROOT / "compose"
+COMPOSE_PROJECT_NAME = "authelia-easy-deploy"
 STATE_DIR = PROJECT_ROOT / ".authelia-easy-deploy"
 SECRETS_PATH = STATE_DIR / "secrets.yaml"
 COMPOSE_ENV_PATH = STATE_DIR / "compose.env"
@@ -669,6 +670,7 @@ def run_compose(*args: str) -> None:
     cmd.extend(args)
 
     env = os.environ.copy()
+    env["COMPOSE_PROJECT_NAME"] = COMPOSE_PROJECT_NAME
     if COMPOSE_ENV_PATH.is_file():
         for line in COMPOSE_ENV_PATH.read_text().splitlines():
             if not line or line.startswith("#") or "=" not in line:
@@ -711,7 +713,7 @@ def reconcile_runtime(skip_pull: bool = False) -> None:
         raise RuntimeError(
             "Docker Compose failed while starting the stack. "
             "If you see a network warning about authelia-net, run: "
-            "docker compose -f compose/docker-compose.yml down && docker network rm authelia-net "
+            "docker compose -p authelia-easy-deploy -f compose/docker-compose.yml down && docker network rm authelia-net "
             "then re-run apply.sh"
         ) from exc
 
