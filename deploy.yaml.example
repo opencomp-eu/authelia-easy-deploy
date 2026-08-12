@@ -56,6 +56,7 @@ oidc:
   # clients:
   #   - client_id: opencloud
   #     client_name: OpenCloud
+  #     claims_policy: opencloud
   #     public: true
   #     authorization_policy: two_factor
   #     require_pkce: true

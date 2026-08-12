@@ -379,6 +379,21 @@ def resolve_user_passwords(config: dict, secrets: dict, image: str) -> dict[str,
     return users_out
 
 
+def prepare_oidc_clients(clients: list[Any]) -> list[Any]:
+    """Ensure OpenCloud clients get claims needed by Authelia 4.39+."""
+    prepared: list[Any] = []
+    for client in clients:
+        if not isinstance(client, dict):
+            prepared.append(client)
+            continue
+        entry = dict(client)
+        client_id = str(entry.get("client_id") or "")
+        if client_id == "opencloud" or client_id.startswith("opencloud-"):
+            entry.setdefault("claims_policy", "opencloud")
+        prepared.append(entry)
+    return prepared
+
+
 def build_configuration(config: dict, secrets: dict, image: str) -> dict:
     authelia = config["authelia"]
     domain = str(authelia["domain"])
@@ -461,9 +476,25 @@ def build_configuration(config: dict, secrets: dict, image: str) -> dict:
 
     if oidc_provider_enabled(config):
         private_key, certificate = load_or_create_jwks(secrets)
-        clients = oidc_clients(config)
+        clients = prepare_oidc_clients(oidc_clients(config))
         configuration["identity_providers"] = {
             "oidc": {
+                "claims_policies": {
+                    "opencloud": {
+                        "id_token": [
+                            "preferred_username",
+                            "name",
+                            "email",
+                            "groups",
+                        ],
+                        "userinfo": [
+                            "preferred_username",
+                            "name",
+                            "email",
+                            "groups",
+                        ],
+                    }
+                },
                 "jwks": [
                     {
                         "key_id": "main",

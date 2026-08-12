@@ -146,7 +146,9 @@ def test_build_configuration_session_and_oidc():
     assert doc["session"]["cookies"][0]["authelia_url"] == "https://auth.test.example"
     assert doc["storage"]["postgres"]["address"] == "tcp://postgres:5432"
     assert "identity_providers" in doc
-    assert doc["identity_providers"]["oidc"]["jwks"][0]["algorithm"] == "RS256"
+    oidc = doc["identity_providers"]["oidc"]
+    assert oidc["jwks"][0]["algorithm"] == "RS256"
+    assert "opencloud" in oidc["claims_policies"]
 
 
 def test_build_configuration_oidc_enabled_without_clients_skips_provider():
