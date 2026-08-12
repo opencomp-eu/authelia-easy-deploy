@@ -487,12 +487,6 @@ def build_configuration(config: dict, secrets: dict, image: str) -> dict:
                             "email",
                             "groups",
                         ],
-                        "userinfo": [
-                            "preferred_username",
-                            "name",
-                            "email",
-                            "groups",
-                        ],
                     }
                 },
                 "jwks": [
