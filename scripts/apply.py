@@ -725,6 +725,9 @@ def restart_authelia_if_running() -> None:
         return
     print("Restarting Authelia to load configuration changes…")
     subprocess.run(["docker", "restart", "authelia"], check=True)
+
+
+def print_summary(config: dict, secrets: dict) -> None:
     authelia = config["authelia"]
     domain = authelia["domain"]
     data_dir = authelia["data_dir"]
