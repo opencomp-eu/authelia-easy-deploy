@@ -52,23 +52,27 @@ oidc:
   enabled: true
   # The OIDC provider is only written to configuration.yml when this list is non-empty.
   clients: []
-  # Example (OpenCloud) — see https://www.authelia.com/configuration/identity-providers/openid-connect/clients/
+  # Example (OpenCloud) — https://www.authelia.com/integration/openid-connect/clients/opencloud/
   # clients:
   #   - client_id: opencloud
   #     client_name: OpenCloud
-  #     client_secret:
-  #       "$plaintext$your-secret-here"
-  #     public: false
+  #     public: true
   #     authorization_policy: two_factor
+  #     require_pkce: true
+  #     pkce_challenge_method: S256
+  #     token_endpoint_auth_method: none
   #     redirect_uris:
-  #       - https://cloud.example.com/oidc/callback
+  #       - https://cloud.example.com/
+  #       - https://cloud.example.com/oidc-callback.html
+  #       - https://cloud.example.com/oidc-silent-redirect.html
   #     scopes:
   #       - openid
+  #       - offline_access
+  #       - groups
   #       - profile
   #       - email
-  #       - groups
   #     grant_types:
   #       - authorization_code
+  #       - refresh_token
   #     response_types:
   #       - code
-  #     token_endpoint_auth_method: client_secret_basic
