@@ -63,6 +63,7 @@ oidc:
   #     token_endpoint_auth_method: none
   #     redirect_uris:
   #       - https://cloud.example.com/
+  #       - https://cloud.example.com/web-oidc-callback
   #       - https://cloud.example.com/oidc-callback.html
   #       - https://cloud.example.com/oidc-silent-redirect.html
   #     scopes:
