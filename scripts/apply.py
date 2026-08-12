@@ -716,9 +716,15 @@ def reconcile_runtime(skip_pull: bool = False) -> None:
             "docker compose -p authelia-easy-deploy -f compose/docker-compose.yml down && docker network rm authelia-net "
             "then re-run apply.sh"
         ) from exc
+    restart_authelia_if_running()
 
 
-def print_summary(config: dict, secrets: dict) -> None:
+def restart_authelia_if_running() -> None:
+    """configuration.yml is bind-mounted; Authelia only reloads OIDC clients on process restart."""
+    if subprocess.run(["docker", "inspect", "authelia"], capture_output=True).returncode != 0:
+        return
+    print("Restarting Authelia to load configuration changes…")
+    subprocess.run(["docker", "restart", "authelia"], check=True)
     authelia = config["authelia"]
     domain = authelia["domain"]
     data_dir = authelia["data_dir"]
