@@ -149,6 +149,9 @@ def test_build_configuration_session_and_oidc():
     oidc = doc["identity_providers"]["oidc"]
     assert oidc["jwks"][0]["algorithm"] == "RS256"
     assert "opencloud" in oidc["claims_policies"]
+    assert oidc["cors"]["allowed_origins_from_client_redirect_uris"] is True
+    assert "token" in oidc["cors"]["endpoints"]
+    assert "userinfo" in oidc["cors"]["endpoints"]
 
 
 def test_build_configuration_oidc_enabled_without_clients_skips_provider():

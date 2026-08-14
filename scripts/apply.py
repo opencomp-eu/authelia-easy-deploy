@@ -489,6 +489,16 @@ def build_configuration(config: dict, secrets: dict, image: str) -> dict:
                         ],
                     }
                 },
+                "cors": {
+                    "endpoints": [
+                        "authorization",
+                        "token",
+                        "revocation",
+                        "userinfo",
+                        "introspection",
+                    ],
+                    "allowed_origins_from_client_redirect_uris": True,
+                },
                 "jwks": [
                     {
                         "key_id": "main",
@@ -526,7 +536,10 @@ def authelia_portal_caddy_block(domain: str) -> str:
     return f"""# authelia-easy-deploy — auth portal
 {domain} {{
     reverse_proxy authelia:9091 {{
+        header_up Host {{host}}
+        header_up X-Forwarded-Host {{host}}
         header_up X-Forwarded-Proto {{scheme}}
+        header_up Origin {{header.Origin}}
     }}
     encode gzip
     log
