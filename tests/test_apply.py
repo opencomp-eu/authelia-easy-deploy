@@ -12,6 +12,8 @@ from scripts.apply import (
     build_configuration,
     derive_compose_files,
     load_or_create_secrets,
+    merge_oidc_clients,
+    oidc_clients,
     render_caddyfile,
     render_template,
     validate_config,
@@ -96,6 +98,30 @@ def test_validate_config_requires_smtp_host():
 def test_compose_project_name_is_unique():
     assert COMPOSE_PROJECT_NAME == "authelia-easy-deploy"
     assert COMPOSE_PROJECT_NAME != "compose"
+
+
+def test_merge_oidc_clients_operator_overrides_engine():
+    engine = [{"client_id": "opencloud", "public": True, "authorization_policy": "two_factor"}]
+    operator = [{"client_id": "opencloud", "authorization_policy": "one_factor"}]
+    merged = merge_oidc_clients(engine, operator)
+    assert len(merged) == 1
+    assert merged[0]["public"] is True
+    assert merged[0]["authorization_policy"] == "one_factor"
+
+
+def test_oidc_clients_includes_engine_sidecars(tmp_path, monkeypatch):
+    from scripts import apply as apply_module
+
+    sidecar_dir = tmp_path / "oidc-clients.d"
+    sidecar_dir.mkdir()
+    (sidecar_dir / "opencloud.yaml").write_text(
+        "client_id: opencloud\npublic: true\n",
+    )
+    monkeypatch.setattr(apply_module, "INTEGRATION_DIR", tmp_path)
+    config = _base_config(oidc={"enabled": True, "clients": []})
+    clients = oidc_clients(config)
+    assert any(item.get("client_id") == "opencloud" for item in clients)
+    assert any(item.get("client_id") == "test-client" for item in clients) is False
 
 
 def test_derive_compose_files_redis_overlay():

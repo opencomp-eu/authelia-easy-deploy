@@ -7,6 +7,41 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/scripts/lib.sh"
 
 DEPLOY_YAML="${SCRIPT_DIR}/deploy.yaml"
+NO_APPLY=0
+PROXY_MODE=""
+
+usage() {
+	echo "Usage: bash wizard.sh [--from-engine] [--no-apply] [--proxy-mode standalone|integrate]"
+}
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--help|-h)
+			usage
+			exit 0
+			;;
+		--from-engine)
+			NO_APPLY=1
+			PROXY_MODE="integrate"
+			shift
+			;;
+		--no-apply)
+			NO_APPLY=1
+			shift
+			;;
+		--proxy-mode)
+			PROXY_MODE="${2:-}"
+			shift 2
+			;;
+		--proxy-mode=*)
+			PROXY_MODE="${1#*=}"
+			shift
+			;;
+		*)
+			die "Unknown option: $1"
+			;;
+	esac
+done
 
 print_banner() {
 	echo
@@ -69,10 +104,15 @@ gather_config() {
 
 	echo
 	echo -e "${BOLD}  Reverse proxy${RESET}"
-	echo "  standalone — this kit runs Caddy on :443 (single-service VPS)"
-	echo "  integrate  — shared Caddy via easydeploy-engine (multi-service VPS)"
-	ask proxy_mode "Proxy mode: standalone or integrate" "standalone"
-	proxy_mode="${proxy_mode,,}"
+	if [[ -n "${PROXY_MODE}" ]]; then
+		proxy_mode="${PROXY_MODE,,}"
+		info "Proxy mode: ${proxy_mode} (set by easydeploy-engine)"
+	else
+		echo "  standalone — this kit runs Caddy on :443 (single-service VPS)"
+		echo "  integrate  — shared Caddy via easydeploy-engine (multi-service VPS)"
+		ask proxy_mode "Proxy mode: standalone or integrate" "standalone"
+		proxy_mode="${proxy_mode,,}"
+	fi
 	if [[ "$proxy_mode" != "standalone" && "$proxy_mode" != "integrate" ]]; then
 		die "proxy mode must be 'standalone' or 'integrate'"
 	fi
@@ -91,7 +131,11 @@ gather_config() {
 	echo "  Ensure DNS A/AAAA for ${auth_domain} points to this server before continuing."
 	echo
 
-	ask_yn proceed "Write deploy.yaml and deploy now?" "y"
+	if [[ "${NO_APPLY}" == "1" ]]; then
+		ask_yn proceed "Write deploy.yaml?" "y"
+	else
+		ask_yn proceed "Write deploy.yaml and deploy now?" "y"
+	fi
 	[[ "$proceed" == "y" ]] || {
 		info "Cancelled."
 		exit 0
@@ -126,13 +170,12 @@ PY
 }
 
 main() {
-	if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-		echo "Usage: bash wizard.sh"
-		exit 0
-	fi
-
 	bash "${SCRIPT_DIR}/ensure-dependencies.sh"
 	gather_config
+	if [[ "${NO_APPLY}" == "1" ]]; then
+		info "Skipping apply (--no-apply / --from-engine). easydeploy-engine will apply."
+		return 0
+	fi
 	bash "${SCRIPT_DIR}/apply.sh"
 }
 

@@ -65,14 +65,57 @@ def to_bool(value: Any) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def managed_is_false(section: dict | None) -> bool:
+    value = (section or {}).get("managed")
+    if value is False:
+        return True
+    return str(value or "").strip().lower() in {"false", "no", "0"}
+
+
+def load_engine_oidc_clients() -> list[Any]:
+    directory = INTEGRATION_DIR / "oidc-clients.d"
+    if not directory.is_dir():
+        return []
+    clients: list[Any] = []
+    for path in sorted(directory.glob("*.yaml")) + sorted(directory.glob("*.yml")):
+        data = load_yaml(path)
+        if isinstance(data, dict) and data.get("client_id"):
+            clients.append(data)
+    return clients
+
+
+def merge_oidc_clients(engine_clients: list[Any], operator_clients: list[Any]) -> list[Any]:
+    by_id: dict[str, dict[str, Any]] = {}
+    for client in engine_clients:
+        if not isinstance(client, dict):
+            continue
+        client_id = str(client.get("client_id") or "").strip()
+        if client_id:
+            by_id[client_id] = dict(client)
+    for client in operator_clients:
+        if not isinstance(client, dict):
+            continue
+        client_id = str(client.get("client_id") or "").strip()
+        if not client_id:
+            continue
+        if client_id in by_id:
+            merged = dict(by_id[client_id])
+            merged.update({key: value for key, value in client.items() if value not in (None, "")})
+            by_id[client_id] = merged
+        else:
+            by_id[client_id] = dict(client)
+    return list(by_id.values())
+
+
 def oidc_clients(config: dict) -> list[Any]:
     oidc = config.get("oidc") or {}
-    if not to_bool(oidc.get("enabled")):
-        return []
-    clients = oidc.get("clients") or []
-    if not isinstance(clients, list):
-        return []
-    return clients
+    operator: list[Any] = []
+    if to_bool(oidc.get("enabled")) or (oidc.get("clients") or []):
+        clients = oidc.get("clients") or []
+        if isinstance(clients, list):
+            operator = clients
+    engine = [] if managed_is_false(oidc) else load_engine_oidc_clients()
+    return merge_oidc_clients(engine, operator)
 
 
 def oidc_provider_enabled(config: dict) -> bool:

@@ -10,10 +10,12 @@ proxy:
     network: easydeploy-net
 ```
 
-Then:
+Then run `bash wizard.sh` in [easydeploy-engine](../easydeploy-engine/) (it can clone this repo as a sibling if needed), or apply this kit, then the engine, by hand. The engine wizard sets `proxy.mode: integrate` and starts shared Caddy.
+
+Manual equivalent:
 
 1. `bash apply.sh` here — writes `.authelia-easy-deploy/integration/caddy.caddy`
-2. `bash apply.sh` in [easydeploy-engine](../easydeploy-engine/) with Authelia enabled in `engine.yaml`
+2. `bash apply.sh` in easydeploy-engine with Authelia enabled in `engine.yaml`
 
 Each kit uses a distinct Compose project name (`authelia-easy-deploy`, `easydeploy-engine`) so one kit's `docker compose up --remove-orphans` does not remove the other's containers.
 

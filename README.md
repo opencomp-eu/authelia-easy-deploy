@@ -20,7 +20,7 @@ Authelia must be reached over **HTTPS** (Caddy obtains certificates automaticall
 ## Quick start
 
 ```bash
-git clone --recurse-submodules https://github.com/YOUR_ORG/authelia-easy-deploy.git
+git clone --recurse-submodules https://github.com/opencomp-eu/authelia-easy-deploy.git
 cd authelia-easy-deploy
 bash ensure-dependencies.sh
 bash wizard.sh
