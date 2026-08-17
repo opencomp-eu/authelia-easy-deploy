@@ -171,6 +171,7 @@ PY
 
 main() {
 	bash "${SCRIPT_DIR}/ensure-dependencies.sh"
+	cd "${SCRIPT_DIR}"
 	gather_config
 	if [[ "${NO_APPLY}" == "1" ]]; then
 		info "Skipping apply (--no-apply / --from-engine). easydeploy-engine will apply."
