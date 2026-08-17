@@ -14,6 +14,7 @@ from scripts.apply import (
     load_or_create_secrets,
     merge_oidc_clients,
     oidc_clients,
+    prepare_oidc_clients,
     render_caddyfile,
     render_template,
     validate_config,
@@ -109,6 +110,13 @@ def test_merge_oidc_clients_operator_overrides_engine():
     assert merged[0]["authorization_policy"] == "one_factor"
 
 
+def test_prepare_oidc_clients_sets_matrix_claims_policy():
+    prepared = prepare_oidc_clients(
+        [{"client_id": "matrix", "client_name": "Matrix", "public": False}]
+    )
+    assert prepared[0]["claims_policy"] == "matrix"
+
+
 def test_oidc_clients_includes_engine_sidecars(tmp_path, monkeypatch):
     from scripts import apply as apply_module
 
@@ -175,6 +183,8 @@ def test_build_configuration_session_and_oidc():
     oidc = doc["identity_providers"]["oidc"]
     assert oidc["jwks"][0]["algorithm"] == "RS256"
     assert "opencloud" in oidc["claims_policies"]
+    assert "matrix" in oidc["claims_policies"]
+    assert "email" in oidc["claims_policies"]["matrix"]["id_token"]
     assert oidc["cors"]["allowed_origins_from_client_redirect_uris"] is True
     assert "token" in oidc["cors"]["endpoints"]
     assert "userinfo" in oidc["cors"]["endpoints"]

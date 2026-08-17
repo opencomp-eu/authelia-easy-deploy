@@ -423,7 +423,7 @@ def resolve_user_passwords(config: dict, secrets: dict, image: str) -> dict[str,
 
 
 def prepare_oidc_clients(clients: list[Any]) -> list[Any]:
-    """Ensure OpenCloud clients get claims needed by Authelia 4.39+."""
+    """Ensure known app clients get claims needed by Authelia 4.39+."""
     prepared: list[Any] = []
     for client in clients:
         if not isinstance(client, dict):
@@ -433,6 +433,8 @@ def prepare_oidc_clients(clients: list[Any]) -> list[Any]:
         client_id = str(entry.get("client_id") or "")
         if client_id == "opencloud" or client_id.startswith("opencloud-"):
             entry.setdefault("claims_policy", "opencloud")
+        if client_id == "matrix" or client_id.startswith("matrix-"):
+            entry.setdefault("claims_policy", "matrix")
         prepared.append(entry)
     return prepared
 
@@ -520,17 +522,17 @@ def build_configuration(config: dict, secrets: dict, image: str) -> dict:
     if oidc_provider_enabled(config):
         private_key, certificate = load_or_create_jwks(secrets)
         clients = prepare_oidc_clients(oidc_clients(config))
+        id_token_claims = [
+            "preferred_username",
+            "name",
+            "email",
+            "groups",
+        ]
         configuration["identity_providers"] = {
             "oidc": {
                 "claims_policies": {
-                    "opencloud": {
-                        "id_token": [
-                            "preferred_username",
-                            "name",
-                            "email",
-                            "groups",
-                        ],
-                    }
+                    "opencloud": {"id_token": list(id_token_claims)},
+                    "matrix": {"id_token": list(id_token_claims)},
                 },
                 "cors": {
                     "endpoints": [
