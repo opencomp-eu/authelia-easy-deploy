@@ -42,29 +42,9 @@ services:
     networks:
       - authelia-net
 
-  caddy:
-    container_name: authelia_caddy
-    image: caddy:2-alpine
-    restart: unless-stopped
-    depends_on:
-      authelia:
-        condition: service_healthy
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    volumes:
-      - ${AED_CADDYFILE}:/etc/caddy/Caddyfile:ro
-      - authelia_caddy_data:/data
-      - authelia_caddy_config:/config
-    networks:
-      - authelia-net
-
 networks:
   authelia-net:
     name: authelia-net
 
 volumes:
   authelia_postgres_data:
-  authelia_caddy_data:
-  authelia_caddy_config:

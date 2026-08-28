@@ -32,7 +32,11 @@ def _literal_str_representer(dumper: yaml.Dumper, data: LiteralStr) -> yaml.node
 yaml.add_representer(LiteralStr, _literal_str_representer, Dumper=_YamlDumper)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT / "easydeploy-lib" / "python"))
+import hostfs  # noqa: E402
+
 COMPOSE_DIR = PROJECT_ROOT / "compose"
+COMPOSE_PROJECT_NAME = "authelia-easy-deploy"
 STATE_DIR = PROJECT_ROOT / ".authelia-easy-deploy"
 SECRETS_PATH = STATE_DIR / "secrets.yaml"
 COMPOSE_ENV_PATH = STATE_DIR / "compose.env"
@@ -40,6 +44,9 @@ COMPOSE_OVERRIDE_PATH = STATE_DIR / "compose.override.yml"
 DEPLOY_PATH = PROJECT_ROOT / "deploy.yaml"
 CADDY_TEMPLATE = PROJECT_ROOT / "caddy" / "Caddyfile.template"
 CADDYFILE = PROJECT_ROOT / "caddy" / "Caddyfile"
+INTEGRATION_DIR = STATE_DIR / "integration"
+INTEGRATION_CADDY_FRAGMENT = INTEGRATION_DIR / "caddy.caddy"
+DEFAULT_INTEGRATE_NETWORK = "easydeploy-net"
 
 SECRET_KEYS = (
     "JWT_SECRET",
@@ -61,19 +68,75 @@ def to_bool(value: Any) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def managed_is_false(section: dict | None) -> bool:
+    value = (section or {}).get("managed")
+    if value is False:
+        return True
+    return str(value or "").strip().lower() in {"false", "no", "0"}
+
+
+def load_engine_oidc_clients() -> list[Any]:
+    directory = INTEGRATION_DIR / "oidc-clients.d"
+    if not directory.is_dir():
+        return []
+    clients: list[Any] = []
+    for path in sorted(directory.glob("*.yaml")) + sorted(directory.glob("*.yml")):
+        data = load_yaml(path)
+        if isinstance(data, dict) and data.get("client_id"):
+            clients.append(data)
+    return clients
+
+
+def merge_oidc_clients(engine_clients: list[Any], operator_clients: list[Any]) -> list[Any]:
+    by_id: dict[str, dict[str, Any]] = {}
+    for client in engine_clients:
+        if not isinstance(client, dict):
+            continue
+        client_id = str(client.get("client_id") or "").strip()
+        if client_id:
+            by_id[client_id] = dict(client)
+    for client in operator_clients:
+        if not isinstance(client, dict):
+            continue
+        client_id = str(client.get("client_id") or "").strip()
+        if not client_id:
+            continue
+        if client_id in by_id:
+            merged = dict(by_id[client_id])
+            merged.update({key: value for key, value in client.items() if value not in (None, "")})
+            by_id[client_id] = merged
+        else:
+            by_id[client_id] = dict(client)
+    return list(by_id.values())
+
+
 def oidc_clients(config: dict) -> list[Any]:
     oidc = config.get("oidc") or {}
-    if not to_bool(oidc.get("enabled")):
-        return []
-    clients = oidc.get("clients") or []
-    if not isinstance(clients, list):
-        return []
-    return clients
+    operator: list[Any] = []
+    if to_bool(oidc.get("enabled")) or (oidc.get("clients") or []):
+        clients = oidc.get("clients") or []
+        if isinstance(clients, list):
+            operator = clients
+    engine = [] if managed_is_false(oidc) else load_engine_oidc_clients()
+    return merge_oidc_clients(engine, operator)
 
 
 def oidc_provider_enabled(config: dict) -> bool:
     """Authelia requires at least one OIDC client when the provider is configured."""
     return len(oidc_clients(config)) > 0
+
+
+def proxy_mode(config: dict) -> str:
+    mode = str((config.get("proxy") or {}).get("mode") or "standalone").strip().lower()
+    if mode not in {"standalone", "integrate"}:
+        raise ValueError("proxy.mode must be 'standalone' or 'integrate'")
+    return mode
+
+
+def integrate_network_name(config: dict) -> str:
+    integrate = (config.get("proxy") or {}).get("integrate") or {}
+    name = str(integrate.get("network") or DEFAULT_INTEGRATE_NETWORK).strip()
+    return name or DEFAULT_INTEGRATE_NETWORK
 
 
 def load_yaml(path: Path) -> dict:
@@ -85,7 +148,7 @@ def load_yaml(path: Path) -> dict:
 
 
 def save_yaml(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path = hostfs.prepare_writable_file(path)
     with path.open("w") as handle:
         yaml.safe_dump(data, handle, default_flow_style=False, sort_keys=False)
 
@@ -125,7 +188,7 @@ def literalize_pem_fields(value: Any) -> Any:
 
 
 def save_authelia_configuration(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path = hostfs.prepare_writable_file(path)
     prepared = literalize_pem_fields(data)
     with path.open("w") as handle:
         yaml.dump(
@@ -197,11 +260,17 @@ def validate_config(config: dict) -> None:
         if not str(smtp.get("host") or "").strip():
             raise ValueError("notifier.smtp.host is required when notifier.type=smtp")
 
+    proxy_mode(config)
+
 
 def compose_file_paths(config: dict) -> list[Path]:
     files = [COMPOSE_DIR / "docker-compose.yml"]
     if to_bool((config.get("session") or {}).get("redis", {}).get("enabled")):
         files.append(COMPOSE_DIR / "redis.yml")
+    if proxy_mode(config) == "integrate":
+        files.append(COMPOSE_DIR / "integrate.yml")
+    else:
+        files.append(COMPOSE_DIR / "caddy.yml")
     if COMPOSE_OVERRIDE_PATH.is_file():
         files.append(COMPOSE_OVERRIDE_PATH)
     return files
@@ -211,6 +280,10 @@ def derive_compose_files(config: dict) -> list[str]:
     files = ["docker-compose.yml"]
     if to_bool((config.get("session") or {}).get("redis", {}).get("enabled")):
         files.append("redis.yml")
+    if proxy_mode(config) == "integrate":
+        files.append("integrate.yml")
+    else:
+        files.append("caddy.yml")
     return files
 
 
@@ -352,6 +425,23 @@ def resolve_user_passwords(config: dict, secrets: dict, image: str) -> dict[str,
     return users_out
 
 
+def prepare_oidc_clients(clients: list[Any]) -> list[Any]:
+    """Ensure known app clients get claims needed by Authelia 4.39+."""
+    prepared: list[Any] = []
+    for client in clients:
+        if not isinstance(client, dict):
+            prepared.append(client)
+            continue
+        entry = dict(client)
+        client_id = str(entry.get("client_id") or "")
+        if client_id == "opencloud" or client_id.startswith("opencloud-"):
+            entry.setdefault("claims_policy", "opencloud")
+        if client_id == "matrix" or client_id.startswith("matrix-"):
+            entry.setdefault("claims_policy", "matrix")
+        prepared.append(entry)
+    return prepared
+
+
 def build_configuration(config: dict, secrets: dict, image: str) -> dict:
     authelia = config["authelia"]
     domain = str(authelia["domain"])
@@ -434,9 +524,29 @@ def build_configuration(config: dict, secrets: dict, image: str) -> dict:
 
     if oidc_provider_enabled(config):
         private_key, certificate = load_or_create_jwks(secrets)
-        clients = oidc_clients(config)
+        clients = prepare_oidc_clients(oidc_clients(config))
+        id_token_claims = [
+            "preferred_username",
+            "name",
+            "email",
+            "groups",
+        ]
         configuration["identity_providers"] = {
             "oidc": {
+                "claims_policies": {
+                    "opencloud": {"id_token": list(id_token_claims)},
+                    "matrix": {"id_token": list(id_token_claims)},
+                },
+                "cors": {
+                    "endpoints": [
+                        "authorization",
+                        "token",
+                        "revocation",
+                        "userinfo",
+                        "introspection",
+                    ],
+                    "allowed_origins_from_client_redirect_uris": True,
+                },
                 "jwks": [
                     {
                         "key_id": "main",
@@ -454,8 +564,7 @@ def build_configuration(config: dict, secrets: dict, image: str) -> dict:
 
 
 def write_secret_files(data_dir: Path, secrets: dict, oidc_enabled: bool) -> None:
-    secret_dir = data_dir / "secrets"
-    secret_dir.mkdir(parents=True, exist_ok=True)
+    secret_dir = hostfs.ensure_writable_directory(Path(data_dir) / "secrets")
     mapping = {
         "JWT_SECRET": secrets["JWT_SECRET"],
         "SESSION_SECRET": secrets["SESSION_SECRET"],
@@ -465,23 +574,37 @@ def write_secret_files(data_dir: Path, secrets: dict, oidc_enabled: bool) -> Non
     if oidc_enabled:
         mapping["OIDC_HMAC_SECRET"] = secrets["OIDC_HMAC_SECRET"]
     for name, value in mapping.items():
-        path = secret_dir / name
+        path = hostfs.prepare_writable_file(secret_dir / name)
         path.write_text(str(value).strip() + "\n")
         path.chmod(0o600)
 
 
-def render_caddyfile(config: dict) -> None:
-    domain = str(config["authelia"]["domain"])
-    block = f"""{domain} {{
+def authelia_portal_caddy_block(domain: str) -> str:
+    return f"""# authelia-easy-deploy — auth portal
+{domain} {{
     reverse_proxy authelia:9091 {{
+        header_up Host {{host}}
+        header_up X-Forwarded-Host {{host}}
         header_up X-Forwarded-Proto {{scheme}}
+        header_up Origin {{header.Origin}}
     }}
     encode gzip
     log
 }}"""
+
+
+def render_caddyfile(config: dict) -> None:
+    domain = str(config["authelia"]["domain"])
+    block = authelia_portal_caddy_block(domain)
     rendered = render_template(CADDY_TEMPLATE.read_text(), {"AUTH_DOMAIN_BLOCK": block.strip()})
     CADDYFILE.parent.mkdir(parents=True, exist_ok=True)
     CADDYFILE.write_text(rendered + "\n")
+
+
+def render_integration_fragment(config: dict) -> None:
+    domain = str(config["authelia"]["domain"])
+    INTEGRATION_DIR.mkdir(parents=True, exist_ok=True)
+    INTEGRATION_CADDY_FRAGMENT.write_text(authelia_portal_caddy_block(domain) + "\n")
 
 
 def render_compose_override(oidc_enabled: bool) -> None:
@@ -507,9 +630,10 @@ def write_compose_env(config: dict, secrets: dict) -> None:
     lines = [
         f"AUTHELIA_IMAGE={image}",
         f"AUTHELIA_DATA_DIR={authelia['data_dir']}",
-        f"AED_CADDYFILE={CADDYFILE.resolve()}",
         f"POSTGRES_PASSWORD={secrets['STORAGE_PASSWORD']}",
     ]
+    if proxy_mode(config) == "standalone":
+        lines.append(f"AED_CADDYFILE={CADDYFILE.resolve()}")
     COMPOSE_ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
     COMPOSE_ENV_PATH.write_text("\n".join(lines) + "\n")
     COMPOSE_ENV_PATH.chmod(0o600)
@@ -517,9 +641,8 @@ def write_compose_env(config: dict, secrets: dict) -> None:
 
 def render_runtime_artifacts(config: dict, secrets: dict) -> None:
     authelia = config["authelia"]
-    data_dir = Path(str(authelia["data_dir"]))
-    config_dir = data_dir / "config"
-    config_dir.mkdir(parents=True, exist_ok=True)
+    data_dir = hostfs.ensure_writable_directory(authelia["data_dir"])
+    config_dir = hostfs.ensure_writable_directory(data_dir / "config")
 
     image = f"{authelia.get('image', 'docker.io/authelia/authelia')}:{authelia.get('tag', 'latest')}"
     users = resolve_user_passwords(config, secrets, image)
@@ -531,14 +654,33 @@ def render_runtime_artifacts(config: dict, secrets: dict) -> None:
     save_authelia_configuration(config_dir / "configuration.yml", configuration)
 
     if str((config.get("notifier") or {}).get("type") or "").lower() == "filesystem":
-        notification_file = config_dir / "notification.txt"
-        if not notification_file.exists():
+        notification_file = hostfs.prepare_writable_file(config_dir / "notification.txt")
+        if notification_file.stat().st_size == 0:
             notification_file.write_text("")
 
     write_secret_files(data_dir, secrets, oidc_active)
-    render_caddyfile(config)
+    if proxy_mode(config) == "integrate":
+        render_integration_fragment(config)
+    else:
+        render_caddyfile(config)
     render_compose_override(oidc_active)
     write_compose_env(config, secrets)
+
+
+def stop_standalone_caddy() -> None:
+    if subprocess.run(["docker", "inspect", "authelia_caddy"], capture_output=True).returncode == 0:
+        print("Stopping standalone authelia_caddy (integrate mode uses easydeploy-engine Caddy)…")
+        subprocess.run(["docker", "stop", "authelia_caddy"], check=False)
+        subprocess.run(["docker", "rm", "authelia_caddy"], check=False)
+
+
+def ensure_docker_network(name: str) -> None:
+    result = subprocess.run(
+        ["docker", "network", "inspect", name],
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        subprocess.run(["docker", "network", "create", name], check=True)
 
 
 def docker_compose_cmd() -> list[str]:
@@ -612,6 +754,7 @@ def run_compose(*args: str) -> None:
     cmd.extend(args)
 
     env = os.environ.copy()
+    env["COMPOSE_PROJECT_NAME"] = COMPOSE_PROJECT_NAME
     if COMPOSE_ENV_PATH.is_file():
         for line in COMPOSE_ENV_PATH.read_text().splitlines():
             if not line or line.startswith("#") or "=" not in line:
@@ -630,6 +773,18 @@ def reconcile_runtime(skip_pull: bool = False) -> None:
     config = load_config()
     data_dir = Path(str(config["authelia"]["data_dir"]))
     secrets = load_yaml(SECRETS_PATH)
+    mode = proxy_mode(config)
+    ensure_docker_network("authelia-net")
+    if mode == "integrate":
+        net = integrate_network_name(config)
+        if net != DEFAULT_INTEGRATE_NETWORK:
+            print(
+                f"Warning: custom integrate network {net!r} is not yet supported in compose/integrate.yml; "
+                f"using {DEFAULT_INTEGRATE_NETWORK}",
+                file=sys.stderr,
+            )
+        ensure_docker_network(DEFAULT_INTEGRATE_NETWORK)
+        stop_standalone_caddy()
     print("Validating Authelia configuration…")
     validate_authelia_configuration(config, data_dir, secrets)
     if not skip_pull:
@@ -642,9 +797,18 @@ def reconcile_runtime(skip_pull: bool = False) -> None:
         raise RuntimeError(
             "Docker Compose failed while starting the stack. "
             "If you see a network warning about authelia-net, run: "
-            "docker compose -f compose/docker-compose.yml down && docker network rm authelia-net "
+            "docker compose -p authelia-easy-deploy -f compose/docker-compose.yml down && docker network rm authelia-net "
             "then re-run apply.sh"
         ) from exc
+    restart_authelia_if_running()
+
+
+def restart_authelia_if_running() -> None:
+    """configuration.yml is bind-mounted; Authelia only reloads OIDC clients on process restart."""
+    if subprocess.run(["docker", "inspect", "authelia"], capture_output=True).returncode != 0:
+        return
+    print("Restarting Authelia to load configuration changes…")
+    subprocess.run(["docker", "restart", "authelia"], check=True)
 
 
 def print_summary(config: dict, secrets: dict) -> None:
@@ -670,6 +834,11 @@ def print_summary(config: dict, secrets: dict) -> None:
         )
     elif oidc_provider_enabled(config):
         print(f"OIDC provider:   active ({len(oidc_clients(config))} client(s))")
+    if proxy_mode(config) == "integrate":
+        print(f"Proxy mode:      integrate (Caddy fragment: {INTEGRATION_CADDY_FRAGMENT})")
+        print("                 Run easydeploy-engine apply.sh to refresh the shared Caddy.")
+    else:
+        print("Proxy mode:      standalone (local authelia_caddy on :443)")
     print()
     print("Next: see docs/integrating-services.md to wire OpenCloud or Matrix to this IdP.")
     print()
@@ -700,7 +869,7 @@ def main() -> None:
     args = parser.parse_args()
     try:
         apply_configuration(skip_runtime=args.skip_runtime, skip_pull=args.skip_pull)
-    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+    except (FileNotFoundError, ValueError, RuntimeError, PermissionError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 

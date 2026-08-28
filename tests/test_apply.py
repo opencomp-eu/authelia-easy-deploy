@@ -8,9 +8,13 @@ import pytest
 import yaml
 
 from scripts.apply import (
+    COMPOSE_PROJECT_NAME,
     build_configuration,
     derive_compose_files,
     load_or_create_secrets,
+    merge_oidc_clients,
+    oidc_clients,
+    prepare_oidc_clients,
     render_caddyfile,
     render_template,
     validate_config,
@@ -30,7 +34,7 @@ def _base_config(**overrides) -> dict:
             "tag": "4.39.4",
             "data_dir": "/var/lib/authelia",
         },
-        "proxy": {"type": "caddy"},
+        "proxy": {"type": "caddy", "mode": "standalone", "integrate": {"network": "easydeploy-net"}},
         "storage": {"type": "postgres"},
         "session": {"redis": {"enabled": False}},
         "authentication": {"backend": "file"},
@@ -92,12 +96,73 @@ def test_validate_config_requires_smtp_host():
         validate_config(config)
 
 
+def test_compose_project_name_is_unique():
+    assert COMPOSE_PROJECT_NAME == "authelia-easy-deploy"
+    assert COMPOSE_PROJECT_NAME != "compose"
+
+
+def test_merge_oidc_clients_operator_overrides_engine():
+    engine = [{"client_id": "opencloud", "public": True, "authorization_policy": "two_factor"}]
+    operator = [{"client_id": "opencloud", "authorization_policy": "one_factor"}]
+    merged = merge_oidc_clients(engine, operator)
+    assert len(merged) == 1
+    assert merged[0]["public"] is True
+    assert merged[0]["authorization_policy"] == "one_factor"
+
+
+def test_prepare_oidc_clients_sets_matrix_claims_policy():
+    prepared = prepare_oidc_clients(
+        [{"client_id": "matrix", "client_name": "Matrix", "public": False}]
+    )
+    assert prepared[0]["claims_policy"] == "matrix"
+
+
+def test_oidc_clients_includes_engine_sidecars(tmp_path, monkeypatch):
+    from scripts import apply as apply_module
+
+    sidecar_dir = tmp_path / "oidc-clients.d"
+    sidecar_dir.mkdir()
+    (sidecar_dir / "opencloud.yaml").write_text(
+        "client_id: opencloud\npublic: true\n",
+    )
+    monkeypatch.setattr(apply_module, "INTEGRATION_DIR", tmp_path)
+    config = _base_config(oidc={"enabled": True, "clients": []})
+    clients = oidc_clients(config)
+    assert any(item.get("client_id") == "opencloud" for item in clients)
+    assert any(item.get("client_id") == "test-client" for item in clients) is False
+
+
 def test_derive_compose_files_redis_overlay():
-    assert derive_compose_files(_base_config()) == ["docker-compose.yml"]
+    assert derive_compose_files(_base_config()) == ["docker-compose.yml", "caddy.yml"]
     assert derive_compose_files(_base_config(session={"redis": {"enabled": True}})) == [
         "docker-compose.yml",
         "redis.yml",
+        "caddy.yml",
     ]
+
+
+def test_derive_compose_files_integrate_mode():
+    config = _base_config(proxy={"type": "caddy", "mode": "integrate", "integrate": {"network": "easydeploy-net"}})
+    assert derive_compose_files(config) == ["docker-compose.yml", "integrate.yml"]
+
+
+def test_render_integration_fragment(tmp_path, monkeypatch):
+    from scripts.apply import INTEGRATION_CADDY_FRAGMENT, render_integration_fragment
+
+    monkeypatch.setattr("scripts.apply.INTEGRATION_DIR", tmp_path)
+    monkeypatch.setattr("scripts.apply.INTEGRATION_CADDY_FRAGMENT", tmp_path / "caddy.caddy")
+    render_integration_fragment(_base_config())
+    text = (tmp_path / "caddy.caddy").read_text()
+    assert "auth.test.example" in text
+    assert "reverse_proxy authelia:9091" in text
+
+
+def test_derive_compose_files_redis_and_integrate():
+    config = _base_config(
+        session={"redis": {"enabled": True}},
+        proxy={"type": "caddy", "mode": "integrate"},
+    )
+    assert derive_compose_files(config) == ["docker-compose.yml", "redis.yml", "integrate.yml"]
 
 
 def test_build_configuration_session_and_oidc():
@@ -115,7 +180,14 @@ def test_build_configuration_session_and_oidc():
     assert doc["session"]["cookies"][0]["authelia_url"] == "https://auth.test.example"
     assert doc["storage"]["postgres"]["address"] == "tcp://postgres:5432"
     assert "identity_providers" in doc
-    assert doc["identity_providers"]["oidc"]["jwks"][0]["algorithm"] == "RS256"
+    oidc = doc["identity_providers"]["oidc"]
+    assert oidc["jwks"][0]["algorithm"] == "RS256"
+    assert "opencloud" in oidc["claims_policies"]
+    assert "matrix" in oidc["claims_policies"]
+    assert "email" in oidc["claims_policies"]["matrix"]["id_token"]
+    assert oidc["cors"]["allowed_origins_from_client_redirect_uris"] is True
+    assert "token" in oidc["cors"]["endpoints"]
+    assert "userinfo" in oidc["cors"]["endpoints"]
 
 
 def test_build_configuration_oidc_enabled_without_clients_skips_provider():
