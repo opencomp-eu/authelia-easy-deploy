@@ -32,6 +32,9 @@ def _literal_str_representer(dumper: yaml.Dumper, data: LiteralStr) -> yaml.node
 yaml.add_representer(LiteralStr, _literal_str_representer, Dumper=_YamlDumper)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT / "easydeploy-lib" / "python"))
+import hostfs  # noqa: E402
+
 COMPOSE_DIR = PROJECT_ROOT / "compose"
 COMPOSE_PROJECT_NAME = "authelia-easy-deploy"
 STATE_DIR = PROJECT_ROOT / ".authelia-easy-deploy"
@@ -561,8 +564,7 @@ def build_configuration(config: dict, secrets: dict, image: str) -> dict:
 
 
 def write_secret_files(data_dir: Path, secrets: dict, oidc_enabled: bool) -> None:
-    secret_dir = data_dir / "secrets"
-    secret_dir.mkdir(parents=True, exist_ok=True)
+    secret_dir = hostfs.ensure_writable_directory(Path(data_dir) / "secrets")
     mapping = {
         "JWT_SECRET": secrets["JWT_SECRET"],
         "SESSION_SECRET": secrets["SESSION_SECRET"],
@@ -639,9 +641,8 @@ def write_compose_env(config: dict, secrets: dict) -> None:
 
 def render_runtime_artifacts(config: dict, secrets: dict) -> None:
     authelia = config["authelia"]
-    data_dir = Path(str(authelia["data_dir"]))
-    config_dir = data_dir / "config"
-    config_dir.mkdir(parents=True, exist_ok=True)
+    data_dir = hostfs.ensure_writable_directory(authelia["data_dir"])
+    config_dir = hostfs.ensure_writable_directory(data_dir / "config")
 
     image = f"{authelia.get('image', 'docker.io/authelia/authelia')}:{authelia.get('tag', 'latest')}"
     users = resolve_user_passwords(config, secrets, image)
@@ -868,7 +869,7 @@ def main() -> None:
     args = parser.parse_args()
     try:
         apply_configuration(skip_runtime=args.skip_runtime, skip_pull=args.skip_pull)
-    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+    except (FileNotFoundError, ValueError, RuntimeError, PermissionError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 

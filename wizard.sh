@@ -6,6 +6,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib.sh
 source "${SCRIPT_DIR}/scripts/lib.sh"
 
+EASYDEPLOY_INVOKE_ARGS=("$@")
+clear_parent_python_env
+
 DEPLOY_YAML="${SCRIPT_DIR}/deploy.yaml"
 NO_APPLY=0
 PROXY_MODE=""
@@ -59,13 +62,14 @@ gather_config() {
 
 	print_banner
 	echo -e "  Press Enter to accept a ${CYAN}[default]${RESET}.\n"
+	print_data_dir_hint
 
 	ask auth_domain "Authelia portal domain (e.g. auth.example.com)" "auth.example.com"
 	base_domain="$(base_domain_from_host "$auth_domain")"
 
 	ask sso_domain "SSO cookie domain (e.g. example.com)" "$base_domain"
 
-	ask data_dir "Data directory" "/var/lib/authelia"
+	ask data_dir "Data directory" "$(default_data_dir authelia)"
 
 	echo
 	echo -e "${BOLD}  Initial admin user${RESET}"
@@ -171,6 +175,7 @@ PY
 
 main() {
 	bash "${SCRIPT_DIR}/ensure-dependencies.sh"
+	ensure_docker_group_session "${EASYDEPLOY_INVOKE_ARGS[@]}"
 	cd "${SCRIPT_DIR}"
 	gather_config
 	if [[ "${NO_APPLY}" == "1" ]]; then
