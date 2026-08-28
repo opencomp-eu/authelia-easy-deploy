@@ -148,7 +148,7 @@ def load_yaml(path: Path) -> dict:
 
 
 def save_yaml(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path = hostfs.prepare_writable_file(path)
     with path.open("w") as handle:
         yaml.safe_dump(data, handle, default_flow_style=False, sort_keys=False)
 
@@ -188,7 +188,7 @@ def literalize_pem_fields(value: Any) -> Any:
 
 
 def save_authelia_configuration(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path = hostfs.prepare_writable_file(path)
     prepared = literalize_pem_fields(data)
     with path.open("w") as handle:
         yaml.dump(
@@ -574,7 +574,7 @@ def write_secret_files(data_dir: Path, secrets: dict, oidc_enabled: bool) -> Non
     if oidc_enabled:
         mapping["OIDC_HMAC_SECRET"] = secrets["OIDC_HMAC_SECRET"]
     for name, value in mapping.items():
-        path = secret_dir / name
+        path = hostfs.prepare_writable_file(secret_dir / name)
         path.write_text(str(value).strip() + "\n")
         path.chmod(0o600)
 
@@ -654,8 +654,8 @@ def render_runtime_artifacts(config: dict, secrets: dict) -> None:
     save_authelia_configuration(config_dir / "configuration.yml", configuration)
 
     if str((config.get("notifier") or {}).get("type") or "").lower() == "filesystem":
-        notification_file = config_dir / "notification.txt"
-        if not notification_file.exists():
+        notification_file = hostfs.prepare_writable_file(config_dir / "notification.txt")
+        if notification_file.stat().st_size == 0:
             notification_file.write_text("")
 
     write_secret_files(data_dir, secrets, oidc_active)
